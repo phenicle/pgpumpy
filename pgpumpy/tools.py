@@ -16,9 +16,13 @@ default_source_pattern = re.compile(r'^default.*')
 
 class PgPumpPy(object):
 
-	def __init__(self):
+	def __init__(self,cfg):
 
-		self.cfg = Cfg(FMT_INI, None, ['./config.ini']).get_config()
+		if not type(cfg).__name__ == 'CfgPy' and not type(cft).__name__ == 'Cfg':
+			raise ValueError('expecting config argument to be a CfgPy or Cfg object')
+			sys.exit(1)
+
+		self.cfg = cfg
 		self.source_host = self.cfg['datasource']['host']
 		self.source_name = self.cfg['datasource']['name']
 		self.source_user = self.cfg['datasource']['user']
@@ -376,8 +380,9 @@ class PgPump(PgPumpPy):
 
 if __name__ == "__main__":
 
+	# from cfgpy.tools import FMT_INI, Cfg
 	# from pgpumpy.tools import PgPump
-	p = PgPump()
-	pp.pprint(p.cfg)
+        cfg = Cfg(FMT_INI, None, '<config-filespec>')
+	p = PgPump(cfg)
 	p.fill_table_using_plan_from_file('<tablename>', '<transfer-plan-filepath>')
 
