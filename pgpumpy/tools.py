@@ -372,9 +372,9 @@ class PgPumpPy(object):
 
 class PgPump(PgPumpPy):
 
-	def __init__(self):
+	def __init__(self, cfg):
 
-		PgPumpPy.__init__(self)
+		PgPumpPy.__init__(self, cfg)
 
 
 
