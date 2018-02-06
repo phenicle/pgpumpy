@@ -219,7 +219,7 @@ class PgPumpPy(object):
 	def build_select_query(self, d):
 
 		use_join = d['use_join']
-		if link_dict in d and not d['link_dict'] == None:
+		if 'link_dict' in d and not d['link_dict'] == None:
 			link_dict = d['link_dict']
 			table_list = link_dict['table-list']
 			if DEBUGGING:
