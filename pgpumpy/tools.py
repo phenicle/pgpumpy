@@ -22,7 +22,7 @@ class PgPumpPy(object):
 			raise ValueError('expecting config argument to be a CfgPy or Cfg object')
 			sys.exit(1)
 
-		self.cfg = cfg
+		self.cfg = cfg.cfg_dict
 		self.source_host = self.cfg['datasource']['host']
 		self.source_name = self.cfg['datasource']['name']
 		self.source_user = self.cfg['datasource']['user']
