@@ -13,6 +13,7 @@ is_link_pattern = re.compile(r'^:link.*$')
 link_statement_parse_pattern = re.compile(r'^:link tables ([\S]+) ([\S]+) and ([\S]+) ([\S]+) on ([\S]+) = ([\S]+)')
 plan_line_classifier_pattern = re.compile(r'^([\S]+)\s+[-=]*([<>])[-=]*\s+(.*$)')
 default_source_pattern = re.compile(r'^default.*')
+target_primarykey_pattern = re.compile(r'([^*]+)\*')
 
 class PgPumpPy(object):
 
@@ -103,7 +104,16 @@ class PgPumpPy(object):
 	def parse_data_target_path(self, data_target_path):
 
 		fields = data_target_path.split('/')
-		return {'db': fields[0], 'table': fields[1], 'column': fields[2]}
+		db = fields[0]
+		table = fields[1]
+		lastfield = fields[2]
+		m = target_primarykey_pattern.match(lastfield)
+		if m:
+			column = m.group(1)
+			return {'db': db, 'table': table, 'column': column, 'is_primary_key': true }
+
+		column = lastfield
+		return {'db': db, 'table': table, 'column': column, 'is_primary_key': false }
 
 
 	def parse_data_target_path_using_join(self, link_dict, data_target_path):
@@ -301,16 +311,24 @@ class PgPumpPy(object):
 		target_column_name_list = []
 		values_list = []
 		parameters_list = []
+		target_primary_keys_list = []
 		for column_dict in column_dict_list:
+			if column_dict['data_target']['is_primary_key']:
+				target_primary_keys_list.append(column_dict['data_target']['column'])
 			if column_dict['data_source']['use_default_value']:
 				continue
 			target_column_name_list.append(column_dict['data_target']['column'])
 			values_list.append('%s')
 
 		target_column_list_string = ','.join(target_column_name_list)
+		target_primary_keys_list_string = ','.join(target_primary_keys_list)
 		values_list_string = ','.join(values_list)
 
-		sql = 'INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING'.format(tablename,target_column_list_string,values_list_string)
+		template = 'INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO NOTHING'
+		sql = template.format( 	tablename,
+					target_column_list_string,
+					values_list_string,
+					target_primary_keys_list_string )
 		return sql
 
 
