@@ -219,13 +219,14 @@ class PgPumpPy(object):
 	def build_select_query(self, d):
 
 		use_join = d['use_join']
-		link_dict = d['link_dict']
-		column_dict_list = d['column_dict_list']
-		table_list = link_dict['table-list']
-		if DEBUGGING:
-			print "TABLE LIST =>"
-			pp.pprint(table_list)
+		if link_dict in d and not d['link_dict'] == None:
+			link_dict = d['link_dict']
+			table_list = link_dict['table-list']
+			if DEBUGGING:
+				print "TABLE LIST =>"
+				pp.pprint(table_list)
 
+		column_dict_list = d['column_dict_list']
 		table_column_list = []
 
 		previous_table_name = None
