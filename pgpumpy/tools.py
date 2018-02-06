@@ -110,10 +110,10 @@ class PgPumpPy(object):
 		m = target_primarykey_pattern.match(lastfield)
 		if m:
 			column = m.group(1)
-			return {'db': db, 'table': table, 'column': column, 'is_primary_key': true }
+			return {'db': db, 'table': table, 'column': column, 'is_primary_key': True }
 
 		column = lastfield
-		return {'db': db, 'table': table, 'column': column, 'is_primary_key': false }
+		return {'db': db, 'table': table, 'column': column, 'is_primary_key': False }
 
 
 	def parse_data_target_path_using_join(self, link_dict, data_target_path):
