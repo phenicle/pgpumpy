@@ -18,7 +18,7 @@ class PgPumpPy(object):
 
 	def __init__(self,cfg):
 
-		if not type(cfg).__name__ == 'CfgPy' and not type(cft).__name__ == 'Cfg':
+		if not type(cfg).__name__ == 'CfgPy' and not type(cfg).__name__ == 'Cfg':
 			raise ValueError('expecting config argument to be a CfgPy or Cfg object')
 			sys.exit(1)
 
