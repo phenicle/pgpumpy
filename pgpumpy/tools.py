@@ -285,6 +285,7 @@ class PgPumpPy(object):
 		print "sql: {}".format(sql)
 		cur = self.source_dbh.cursor()
 		cur.execute(sql)
+		self.source_dbh.commit()
 		rows = cur.fetchall()
 		if DEBUGGING:
 			pp.pprint(rows)
