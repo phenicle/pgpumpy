@@ -203,6 +203,7 @@ class PgPumpPy(object):
 			if not using_join:
 				column_transfer_dict = self.parse_xfer_plan_line(line)
 				column_dict_list.append(column_transfer_dict)
+				continue
 
 			column_transfer_dict = self.parse_xfer_plan_line_using_join(link_dict,line)
 			column_dict_list.append(column_transfer_dict)

@@ -7,7 +7,7 @@ with open("README", 'r') as f:
 
 setup(
    name='pgpumpy',
-   version='1.0.7',
+   version='1.0.8',
    description='A data pump for PostgreSQL, implemented as a Python module.',
    license="Mozilla Public License 2.0 (MPL 2.0)",
    long_description='A data pump for PostgreSQL, implemented as a Python module.',
