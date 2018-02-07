@@ -297,6 +297,7 @@ class PgPumpPy(object):
 		cur.execute(sql)
 		self.source_dbh.commit()
 		rows = cur.fetchall()
+		self.source_dbh.commit()
 		if DEBUGGING:
 			pp.pprint(rows)
 		return rows
@@ -362,7 +363,7 @@ class PgPumpPy(object):
 
 		for row in result_set_from_source:
 			cur.execute(upsert_template, row)
-		self.target_dbh.commit()
+			self.target_dbh.commit()
 
 		cur.execute(enable_cmd )
 		self.target_dbh.commit()
