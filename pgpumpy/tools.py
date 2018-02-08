@@ -1,11 +1,13 @@
-# -*- coding: utf-8 -*-
 
 import sys
 import re
 from cfgpy.tools import FMT_INI, Cfg
+from pgdbpy.tools import PgDb
 import psycopg2
 import pprint
 
+MYNAME = 'pgpumpy'
+DEFAULT_DATA_WINDOW_SIZE = 0
 DEBUGGING = True
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -13,244 +15,352 @@ is_link_pattern = re.compile(r'^:link.*$')
 link_statement_parse_pattern = re.compile(r'^:link tables ([\S]+) ([\S]+) and ([\S]+) ([\S]+) on ([\S]+) = ([\S]+)')
 plan_line_classifier_pattern = re.compile(r'^([\S]+)\s+[-=]*([<>])[-=]*\s+(.*$)')
 default_source_pattern = re.compile(r'^default.*')
-target_primarykey_pattern = re.compile(r'([^*]+)\*')
+primarykey_pattern = re.compile(r'([^*]+)\*')
 
-class PgPumpPy(object):
+def parse_link_statement(line):
 
-	def __init__(self,cfg):
+	m = link_statement_parse_pattern.match(line)
+	if not m:
+		return None
 
-		if not type(cfg).__name__ == 'CfgPy' and not type(cfg).__name__ == 'Cfg':
-			raise ValueError('expecting config argument to be a CfgPy or Cfg object')
-			sys.exit(1)
-
-		self.cfg = cfg.cfg_dict
-		self.source_host = self.cfg['datasource']['host']
-		self.source_name = self.cfg['datasource']['name']
-		self.source_user = self.cfg['datasource']['user']
-		self.source_pass = self.cfg['datasource']['password']
-
-		cnxstr = "host='{}' user='{}' dbname='{}' password='{}'".format(
-			self.source_host,
-			self.source_user,
-			self.source_name,
-			self.source_pass
-			)
-
-		self.source_dbh = psycopg2.connect(cnxstr)
-			
-		self.target_host = self.cfg['datatarget']['host']
-		self.target_name = self.cfg['datatarget']['name']
-		self.target_user = self.cfg['datatarget']['user']
-		self.target_pass = self.cfg['datatarget']['password']
-
-		cnxstr = "host='{}' user='{}' dbname='{}' password='{}'".format(
-			self.target_host,
-			self.target_user,
-			self.target_name,
-			self.target_pass
-			)
-
-		self.target_dbh = psycopg2.connect(cnxstr)
+	linkage = {
+	 'on-clause': "{} = {}".format(m.group(5),m.group(6)),
+	 'table-nicknames': {
+	   m.group(1): m.group(2),
+	   m.group(3): m.group(4)
+	 },
+	 'table-list': [m.group(1), m.group(3)]
+	}
+	return linkage
 
 
-	def is_link_statement(self, line):
+class TableLinkage(object):
 
-		if is_link_pattern.match(line):
-			return True
+	def __init__(self, link_statement):
 
-		return False
+		r = parse_link_statement(link_statement)
+		self.on_clause 		= r['on-clause']
+		self.table_nicknames 	= r['nicknames']
+		self.table_list 		= r['table-list']
 
 
-	def parse_link_statement(self,line):
+def parse_data_source_path_sans_join(data_source_path):
 
-		m = link_statement_parse_pattern.match(line)
-		if not m:
-			return None
+	m = default_source_pattern.match(data_source_path)
+	if m:
+		return {'use_default_value': True}
 
-		linkage = {
-		 'on-clause': "{} = {}".format(m.group(5),m.group(6)),
-		 'table-nicknames': {
-		   m.group(1): m.group(2),
-		   m.group(3): m.group(4)
-		 },
-		 'table-list': [m.group(1), m.group(3)]
+	fields = data_source_path.split('/')
+	db = fields[0]
+	table = fields[1]
+	lastfield = fields[2]
+	m = primarykey_pattern.match(lastfield)
+	if m:
+		column = m.group(1)
+		result_dict = {
+			'db': db, 
+			'table': table, 
+			'column': column, 
+			'is_primary_key': True 
+			}
+		return result_dict 
+
+	column = lastfield
+	result_dict = {
+		'db': db, 
+		'table': table, 
+		'column': column, 
+		'is_primary_key': False 
 		}
-		return linkage
+
+	return result_dict
+
+def parse_data_source_path_with_join(linkage, data_source_path):
+
+	m = default_source_pattern.match(data_source_path)
+	if m:
+		result_dict = {
+			'use_default_value': True, 
+			'db': None, 
+			'table': None, 
+			'nickname': None, 
+			'column': None 
+		}
+		return result_dict
+
+	fields = data_source_path.split('/')
+	tablename = fields[1]
+	nickname = linkage.table_nicknames[tablename]
+	result_dict = { 
+		'use_default_value': False, 
+		'db': fields[0], 
+		'table': tablename, 
+		'nickname': nickname, 
+		'column': fields[2] 
+		}
+
+	return result_dict
+
+def parse_data_target_path_sans_join(data_target_path):
+
+	fields = data_target_path.split('/')
+	db = fields[0]
+	table = fields[1]
+	lastfield = fields[2]
+	m = primarykey_pattern.match(lastfield)
+	if m:
+		column = m.group(1)
+		result_dict = {
+			'db': db, 
+			'table': table, 
+			'column': column, 
+			'is_primary_key': True 
+			}
+		return result_dict 
+
+	column = lastfield
+	result_dict = {
+		'db': db, 
+		'table': table, 
+		'column': column, 
+		'is_primary_key': False 
+		}
+
+	return result_dict 
+
+def parse_data_target_path_with_join(linkage, data_target_path):
+
+	fields = data_target_path.split('/')
+	tablename = fields[1]
+	nickname = linkage.table_nicknames[tablename]
+	result_dict = {
+		'db': fields[0], 
+		'table': tablename, 
+		'nickname': nickname, 
+		'column': fields[2]
+		}
+
+	return result_dict
+
+def get_transfer_plan_content(filepath):
+
+	lines = []
+	with open(filepath, 'r') as fh:
+		lines = fh.readlines()
+
+	return lines
 
 
-	def parse_data_source_path(self, data_source_path):
+class TableColumn(object):
 
-
-		m = default_source_pattern.match(data_source_path)
-		if m:
-			return {'use_default_value': True}
-
-		fields = data_source_path.split('/')
-		return { 'use_default_value': False, 'db': fields[0], 'table': fields[1], 'column': fields[2] }
-
-
-	def parse_data_source_path_using_join(self, link_dict, data_source_path):
-
-		m = default_source_pattern.match(data_source_path)
-		if m:
-			return {'use_default_value': True}
-
-		fields = data_source_path.split('/')
-		tablename = fields[1]
-		nickname = link_dict['table-nicknames'][tablename]
-		return { 'use_default_value': False, 'db': fields[0], 'table': tablename, 'nickname': nickname, 'column': fields[2] }
-
-
-	def parse_data_target_path(self, data_target_path):
-
-		fields = data_target_path.split('/')
-		db = fields[0]
-		table = fields[1]
-		lastfield = fields[2]
-		m = target_primarykey_pattern.match(lastfield)
-		if m:
-			column = m.group(1)
-			return {'db': db, 'table': table, 'column': column, 'is_primary_key': True }
-
-		column = lastfield
-		return {'db': db, 'table': table, 'column': column, 'is_primary_key': False }
-
-
-	def parse_data_target_path_using_join(self, link_dict, data_target_path):
-
-		fields = data_target_path.split('/')
-		tablename = fields[1]
-		nickname = link_dict['table-nicknames'][tablename]
-		return {'db': fields[0], 'table': tablename, 'nickname': nickname, 'column': fields[2]}
-
-
-	def parse_xfer_plan_line(self, line):
-
-		m = plan_line_classifier_pattern.match(line)
-		if m:
-			directional_symbol = m.group(2)
-			if directional_symbol == '>':
-				data_source_path = m.group(1)
-				data_target_path = m.group(3)
-			elif directional_symbol == '<':
-				data_source_path = m.group(3)
-				data_target_path = m.group(1)
-			else:
-				raise ValueError('bad directional symbol: {}'.format(directional_symbol))
-		else:
-			raise ValueError('failed to parse transfer plan line: {}'.format(line))
-
-		if DEBUGGING:
-			print "source: {}".format(data_source_path)
-			print "target: {}".format(data_target_path)
-
-		data_source_dict = self.parse_data_source_path(data_source_path)
-		data_target_dict = self.parse_data_target_path(data_target_path)
-		return { 'data_source': data_source_dict, 'data_target': data_target_dict }
-
-
-	def parse_xfer_plan_line_using_join(self, link_dict, line):
-
-		m = plan_line_classifier_pattern.match(line)
-		if m:
-			directional_symbol = m.group(2)
-			if directional_symbol == '>':
-				data_source_path = m.group(1)
-				data_target_path = m.group(3)
-			elif directional_symbol == '<':
-				data_source_path = m.group(3)
-				data_target_path = m.group(1)
-			else:
-				raise ValueError('bad directional symbol: {}'.format(directional_symbol))
-		else:
-			raise ValueError('failed to parse transfer plan line: {}'.format(line))
-
-		if DEBUGGING:
-			print "source: {}".format(data_source_path)
-			print "target: {}".format(data_target_path)
-
-		data_source_dict = self.parse_data_source_path(data_source_path)
-		data_target_dict = self.parse_data_target_path(data_target_path)
-		return { 'data_source': data_source_dict, 'data_target': data_target_dict }
-
-
-	def get_table_transfer_plan(self, tablename, filepath):
+	def __init__(self, role, table_column_transfer_statement, linkage=None):
 		"""
-		 where 'table_transfer_plan' is a list of transfer plan statements
+		 where 'role' ::= 'source'|'target'
 		"""
+		if linkage and role == 'source':
+			r = parse_data_source_path_with_join(linkage, table_column_transfer_statement)
+		elif linkage and role == 'target':
+			r = parse_data_target_path_with_join(linkage, table_column_transfer_statement)
+		elif not linkage and role == 'source':
+			r = parse_data_source_path_sans_join(table_column_transfer_statement)
+		elif not linkage and role == 'target':
+			r = parse_data_target_path_sans_join(table_column_transfer_statement)
+		else:
+			raise ValueError("unrecognized role: {}, expecting 'source' or 'target'".format(role))
 
-		lines = []
-		with open(filepath, 'r') as fh:
-			lines = fh.readlines()
+		self.role = role
+		self.linkage = linkage
+		if not 'use_default_value' in r:
+			self.use_default_value = None
+		else:
+			self.use_default_value = r['use_default_value']
 
-		return lines
+		if not 'db' in r:
+			self.db = None
+		else:
+			self.db = r['db']
 
-	"""
-	def convert_transfer_plan_to_transfer_column_dict_list(self, lines):
+		if not 'table' in r:
+			self.table = None
+		else:
+			self.table = r['table']
 
-		column_dict_list = []
-		for line in lines:
-			column_transfer_dict = self.parse_xfer_plan_line(line)
-			column_dict_list.append(column_transfer_dict)
+		if not 'column' in r:
+			self.column = None
+		else:
+			self.column = r['column']
 
-		return column_dict_list
-	"""
+		if not 'is_primary_key' in r:
+			self.is_primary_key = None
+		else:
+			self.is_primary_key = r['is_primary_key']
+
+		if not 'nickname' in r:
+			self.nickname = None
+		else:
+			self.nickname = r['nickname']
 
 
-	def convert_transfer_plan_to_dictionary(self, lines):
+class Transference(object):
 
-		column_dict_list = []
+	def __init__(self, data_source, data_target):
+
+		self.data_source = data_source
+		self.data_target = data_target
+
+
+def parse_xfer_plan_line_sans_join(line):
+
+	m = plan_line_classifier_pattern.match(line)
+	if m:
+		directional_symbol = m.group(2)
+		if directional_symbol == '>':
+			data_source_path = m.group(1)
+			data_target_path = m.group(3)
+		elif directional_symbol == '<':
+			data_source_path = m.group(3)
+			data_target_path = m.group(1)
+		else:
+			raise ValueError('bad directional symbol: {}'.format(directional_symbol))
+	else:
+		raise ValueError('failed to parse transfer plan line: {}'.format(line))
+
+	if DEBUGGING:
+		print "source: {}".format(data_source_path)
+		print "target: {}".format(data_target_path)
+
+	data_source = TableColumn('source', data_source_path)
+	data_target = TableColumn('target', data_target_path)
+		
+	return Transference(data_source, data_target)
+
+
+def parse_xfer_plan_line_with_join(linkage, line):
+
+	m = plan_line_classifier_pattern.match(line)
+	if m:
+		directional_symbol = m.group(2)
+		if directional_symbol == '>':
+			data_source_path = m.group(1)
+			data_target_path = m.group(3)
+		elif directional_symbol == '<':
+			data_source_path = m.group(3)
+			data_target_path = m.group(1)
+		else:
+			raise ValueError('bad directional symbol: {}'.format(directional_symbol))
+	else:
+		raise ValueError('failed to parse transfer plan line: {}'.format(line))
+
+	if DEBUGGING:
+		print "source: {}".format(data_source_path)
+		print "target: {}".format(data_target_path)
+
+	data_source = TableColumn('source', data_source_path, linkage)
+	data_target = TableColumn('target', data_target_path, linkage)
+	return Transference(data_source, data_target)
+
+
+def build_upsert_template_from_transfer_column_transference_list(tablename, column_transference_list):
+
+	sql_header = 'INSERT INTO {} ('.format(tablename)
+	sql_middle = ') VALUES ('
+	sql_tail = ')'
+
+	target_column_name_list = []
+	values_list = []
+	parameters_list = []
+	target_primary_keys_list = []
+	for column_transference in column_transference_list:
+		if column_transference.data_target.is_primary_key:
+			target_primary_keys_list.append(column_transference.data_target.column)
+		if column_transference.data_source.use_default_value:
+			continue
+		target_column_name_list.append(column_transference.data_target.column)
+		values_list.append('%s')
+
+	target_column_list_string = ','.join(target_column_name_list)
+	target_primary_keys_list_string = ','.join(target_primary_keys_list)
+	values_list_string = ','.join(values_list)
+
+	template = 'INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO NOTHING'
+	sql = template.format( 	tablename,
+				target_column_list_string,
+				values_list_string,
+				target_primary_keys_list_string )
+	return sql
+
+def is_link_statement(line):
+
+	if is_link_pattern.match(line):
+		return True
+
+	return False
+
+
+class TransferPlan(object):
+
+	def __init__(self, target_tablename, transfer_plan_filespec):
+
+		self.target_tablename = target_tablename
+		transfer_plan_content = get_transfer_plan_content(transfer_plan_filespec)
+
+		column_transference_list = []
 		using_join = False
-		link_dict = None
-		for line in lines:
+		linkage = None
+		for line in transfer_plan_content:
 			""" skip comments """
 
-			if self.is_link_statement(line):
-				link_dict = self.parse_link_statement(line)
+			if is_link_statement(line):
+				linkage = TableLinkage(line)
 				using_join = True
 				continue
 
 			if not using_join:
-				column_transfer_dict = self.parse_xfer_plan_line(line)
-				column_dict_list.append(column_transfer_dict)
+				column_transference = parse_xfer_plan_line_sans_join(line)
+				column_transference_list.append(column_transference)
+				if column_transference.data_source.is_primary_key:
+					self.source_table_primary_key = column_transference.data_source.column
+				if column_transference.data_target.is_primary_key:
+					self.target_table_primary_key = column_transference.data_target.column
 				continue
 
-			column_transfer_dict = self.parse_xfer_plan_line_using_join(link_dict,line)
-			column_dict_list.append(column_transfer_dict)
+			column_transference = parse_xfer_plan_line_with_join(linkage,line)
+			column_transference_list.append(column_transference)
+			if column_transference.data_source.is_primary_key:
+				self.source_table_primary_key = column_transference.data_source.column
+			if column_transference.data_target.is_primary_key:
+				self.target_table_primary_key = column_transference.data_target.column
 
-		result = {
-		 'use_join': using_join,
-		 'link_dict': link_dict,
-		 'column_dict_list': column_dict_list
-		}
+		self.use_join = using_join
+		self.linkage = linkage
+		self.column_transference_list = column_transference_list
+		self.upsert_template = build_upsert_template_from_transfer_column_transference_list(
+			target_tablename, column_transference_list)
 
-		return result
+	def build_select_query(self):
 
-
-	def build_select_query(self, d):
-
-		use_join = d['use_join']
-		if 'link_dict' in d and not d['link_dict'] == None:
-			link_dict = d['link_dict']
-			table_list = link_dict['table-list']
+		use_join = self.use_join
+		linkage = self.linkage
+		if not linkage == None:
+			table_list = linkage.table_list
 			if DEBUGGING:
 				print "TABLE LIST =>"
 				pp.pprint(table_list)
 
-		column_dict_list = d['column_dict_list']
+		column_transference_list = self.column_transference_list
 		table_column_list = []
 
 		previous_table_name = None
-		for c in column_dict_list:
-			if c['data_source']['use_default_value'] == True:
+		for c in column_transference_list:
+			if c.data_source.use_default_value == True:
 				""" skip columns that are flagged as using default values """
 				continue
 
 			if len(table_column_list) == 0:
-				tablename = c['data_source']['table']
-				colname = c['data_source']['column']
+				tablename = c.data_source.table
+				colname = c.data_source.column
 				if use_join:
-					nickname = link_dict['table-nicknames'][tablename]
+					nickname = linkage.table_nicknames[tablename]
 					table_column_list.append("{}.{}".format(nickname,colname))
 				else:
 					table_column_list.append(colname)
@@ -258,14 +368,14 @@ class PgPumpPy(object):
 				continue
 
 			""" otherwise not first column """
-			if not use_join and not previous_table_name == c['data_source']['table']:
+			if not use_join and not previous_table_name == c.data_source.table:
 				raise ValueError('not using join but sourcing columns from different tables!')
 				sys.exit(1)
 
-			tablename = c['data_source']['table']
-			colname = c['data_source']['column']
+			tablename = c.data_source.table
+			colname = c.data_source.column
 			if use_join:
-				nickname = link_dict['table-nicknames'][tablename]
+				nickname = linkage.table_nicknames[tablename]
 				table_column_list.append("{}.{}".format(nickname,colname))
 			else:
 				table_column_list.append(colname)
@@ -274,11 +384,11 @@ class PgPumpPy(object):
 		column_name_string = ','.join(table_column_list)
 		""" and build the FROM string """
 		if use_join:
-			nicknames = link_dict['table-nicknames']
+			nicknames = linkage.table_nicknames
 			tables = nicknames.keys()
 			from_string = "{} AS {}".format(table_list[0],nicknames[table_list[0]])
 			join_string = "{} AS {}".format(table_list[1],nicknames[table_list[1]])
-			on_string = link_dict['on-clause']
+			on_string = linkage.on_clause
 			sql = """SELECT {} FROM {} LEFT OUTER JOIN {} ON {}
 			""".format(column_name_string,from_string,join_string,on_string)
 
@@ -289,66 +399,104 @@ class PgPumpPy(object):
 
 		return sql
 
-	def retrieve_data_from_source(self,d):
 
-		sql = self.build_select_query(d)
-		print "sql: {}".format(sql)
-		cur = self.source_dbh.cursor()
-		cur.execute(sql)
-		self.source_dbh.commit()
-		rows = cur.fetchall()
-		self.source_dbh.commit()
-		if DEBUGGING:
-			pp.pprint(rows)
-		return rows
+	def build_select_query_with_windowing(self, offset, limit):
 
+		""" want source table's primary key """
+		source_table_pk = self.source_table_primary_key
+		use_join = self.use_join
+		linkage = self.linkage
+		if not linkage == None:
+			table_list = linkage.table_list
+			if DEBUGGING:
+				print "TABLE LIST =>"
+				pp.pprint(table_list)
 
-	def build_upsert_template_from_transfer_column_dict_list(self, tablename, column_dict_list):
+		column_transference_list = self.column_transference_list
+		table_column_list = []
 
-		sql_header = 'INSERT INTO {} ('.format(tablename)
-		sql_middle = ') VALUES ('
-		sql_tail = ')'
-
-		target_column_name_list = []
-		values_list = []
-		parameters_list = []
-		target_primary_keys_list = []
-		for column_dict in column_dict_list:
-			if column_dict['data_target']['is_primary_key']:
-				target_primary_keys_list.append(column_dict['data_target']['column'])
-			if column_dict['data_source']['use_default_value']:
+		previous_table_name = None
+		for c in column_transference_list:
+			if c.data_source.use_default_value == True:
+				""" skip columns that are flagged as using default values """
 				continue
-			target_column_name_list.append(column_dict['data_target']['column'])
-			values_list.append('%s')
 
-		target_column_list_string = ','.join(target_column_name_list)
-		target_primary_keys_list_string = ','.join(target_primary_keys_list)
-		values_list_string = ','.join(values_list)
+			if len(table_column_list) == 0:
+				tablename = c.data_source.table
+				colname = c.data_source.column
+				if use_join:
+					nickname = linkage.table_nicknames[tablename]
+					table_column_list.append("{}.{}".format(nickname,colname))
+				else:
+					table_column_list.append(colname)
+				previous_table_name = tablename
+				continue
 
-		template = 'INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO NOTHING'
-		sql = template.format( 	tablename,
-					target_column_list_string,
-					values_list_string,
-					target_primary_keys_list_string )
+			""" otherwise not first column """
+			if not use_join and not previous_table_name == c.data_source.table:
+				raise ValueError('not using join but sourcing columns from different tables!')
+				sys.exit(1)
+
+			tablename = c.data_source.table
+			colname = c.data_source.column
+			if use_join:
+				nickname = linkage.table_nicknames[tablename]
+				table_column_list.append("{}.{}".format(nickname,colname))
+			else:
+				table_column_list.append(colname)
+			previous_table_name = tablename
+
+		column_name_string = ','.join(table_column_list)
+		""" and build the FROM string """
+		if use_join:
+			nicknames = linkage.table_nicknames
+			tables = nicknames.keys()
+			from_string = "{} AS {}".format(table_list[0],nicknames[table_list[0]])
+			join_string = "{} AS {}".format(table_list[1],nicknames[table_list[1]])
+			on_string = linkage.on_clause
+			sql = """SELECT {} FROM {} LEFT OUTER JOIN {} ON {}
+			""".format(column_name_string,from_string,join_string,on_string)
+
+		else:
+			from_string = previous_table_name
+			sql = """SELECT {} FROM {} OFFSET {} LIMIT {}
+			""".format(
+				column_name_string, 
+				previous_table_name,
+				offset,
+				limit
+				)
+
 		return sql
 
 
-	def disable_table_triggers(self, tablename):
 
-		cur = self.target_dbh.cursor()
-		""" last time I looked, psycopg2 didn't support parameter substitution on table names """
-		q = 'ALTER TABLE {} DISABLE TRIGGER ALL'.format(tablename)
-		cur.execute(q)
-		self.target_dbh.commit()
+class PgPumpPy(object):
+
+	def __init__(self,cfg):
+
+		if not type(cfg).__name__ == 'CfgPy' and not type(cfg).__name__ == 'Cfg':
+			raise ValueError('expecting config argument to be a CfgPy or Cfg object')
+			sys.exit(1)
+
+		self.cfg = cfg.cfg_dict
+
+		self.source = PgDb( cfg, 'datasource')
+		self.target = PgDb( cfg, 'datatarget')
+
+		self.data_window_size = DEFAULT_DATA_WINDOW_SIZE
+		if MYNAME in cfg.cfg_dict:
+			module_cfgdict = cfg.cfg_dict[MYNAME]
+			if 'data_window_size' in module_cfgdict:
+				self.data_window_size = int(module_cfgdict['data_window_size'])
 
 
-	def enable_table_triggers(self, tablename):
+	def retrieve_data_from_source(self, transferplan):
 
-		cur = self.target_dbh.cursor()
-		""" last time I looked, psycopg2 didn't support parameter substitution on table names """
-		q = 'ALTER TABLE {} ENABLE TRIGGER ALL'.format(tablename)
-		cur.execute(q)
-		self.target_dbh.commit()	
+		sql = transferplan.build_select_query()
+		print "sql: {}".format(sql)
+		rows = self.source.execute('all', sql, None)
+		return rows
 
 
 	def update_target(self, tablename, upsert_template, result_set_from_source):
@@ -356,40 +504,55 @@ class PgPumpPy(object):
 		disable_cmd = 'ALTER TABLE {} DISABLE TRIGGER ALL'.format(tablename)
 		enable_cmd = 'ALTER TABLE {} ENABLE TRIGGER ALL'.format(tablename)
 
-		cur = self.target_dbh.cursor()
-
-		cur.execute(disable_cmd )
-		self.target_dbh.commit()
+		self.target.execute('none', disable_cmd)
 
 		for row in result_set_from_source:
-			cur.execute(upsert_template, row)
-			self.target_dbh.commit()
+			self.target.execute('none', upsert_template, row)
 
-		cur.execute(enable_cmd )
-		self.target_dbh.commit()
+		self.target.execute('none', enable_cmd)
+
+	def retrieve_and_update_with_data_windowing(self, target_tablename, xferplan):
+
+		print "using data windowing, window size {}".format(self.data_window_size)
+		pp.pprint(xferplan.__dict__)
+		pp.pprint(xferplan.column_transference_list[0].__dict__)
+		pp.pprint(xferplan.column_transference_list[0].data_source.__dict__)
+		print "source table: {}".format(xferplan.column_transference_list[0].data_source.table)
+
+		sql = xferplan.build_select_query()
+		query_result_set_row_count = int(self.source.get_query_result_set_rowcount(sql))
+		print "query result set count: {}".format(query_result_set_row_count)
+		if query_result_set_row_count <= self.data_window_size:
+			print "{} <= {}, so not using windowing".format(query_result_set_row_count,self.data_window_size)
+			result_set = self.retrieve_data_from_source(xferplan)
+			self.update_target(target_tablename, xferplan.upsert_template, result_set)
+			return
+
+		for start in range(0,query_result_set_row_count,self.data_window_size):
+			end = min(start + self.data_window_size, query_result_set_row_count)
+			print "start: {}, end: {}".format(start, end)
+			sql = xferplan.build_select_query_with_windowing(start, self.data_window_size)
+			print "{}".format(sql)
+			result_set = self.source.execute('all', sql, None)
+			self.update_target(target_tablename, xferplan.upsert_template, result_set)			
 
 
-	def fill_table_using_plan_from_file(self, tablename, filepath):
-		
-		#transfer_plan_lines = poc.get_table_transfer_plan('accounts',datfile)
-		#result = poc.convert_transfer_plan_to_dictionary(transfer_plan_lines)
-		#poc.retrieve_data_from_source(result)
-		transfer_plan_lines = self.get_table_transfer_plan(tablename, filepath)
-		#column_dict_list = self.convert_transfer_plan_to_transfer_column_dict_list(transfer_plan_lines)
-		transfer_plan_dict = self.convert_transfer_plan_to_dictionary(transfer_plan_lines)
+
+	def fill_table_using_plan_from_file(self, target_tablename, filepath):
+
+		xferplan = TransferPlan(target_tablename, filepath)
+
 		if DEBUGGING:
-			print "TRANSFER PLAN DICT =>"
-			pp.pprint(transfer_plan_dict)
+			print "UPSERT TEMPLATE =>"
+			pp.pprint(xferplan.upsert_template)
 
-		column_dict_list = transfer_plan_dict['column_dict_list']
-		upsert_template = self.build_upsert_template_from_transfer_column_dict_list(tablename, column_dict_list)
-		if DEBUGGING:
-			print "upsert: {}".format(upsert_template)
-		result_set = self.retrieve_data_from_source(transfer_plan_dict)
-		if DEBUGGING:
-			pp.pprint(result_set)
-			#sys.exit(1)
-		self.update_target(tablename, upsert_template, result_set)
+		if self.data_window_size > 0:
+			self.retrieve_and_update_with_data_windowing(target_tablename, xferplan)
+			return
+
+		result_set = self.retrieve_data_from_source(xferplan)
+		self.update_target(target_tablename, xferplan.upsert_template, result_set)
+
 
 
 class PgPump(PgPumpPy):
@@ -399,12 +562,15 @@ class PgPump(PgPumpPy):
 		PgPumpPy.__init__(self, cfg)
 
 
-
 if __name__ == "__main__":
 
 	# from cfgpy.tools import FMT_INI, Cfg
 	# from pgpumpy.tools import PgPump
-        cfg = Cfg(FMT_INI, None, '<config-filespec>')
+	#cfg = Cfg(FMT_INI, None, '<config-filespec>')
+	cfg = Cfg(FMT_INI, None, ['/Users/spl/work/ivc/co/pix/config.ini'])
+	pp.pprint(cfg.cfg_dict)
 	p = PgPump(cfg)
-	p.fill_table_using_plan_from_file('<tablename>', '<transfer-plan-filepath>')
+	# p.fill_table_using_plan_from_file('<target-tablename>', '<transfer-plan-filepath>')
+	p.fill_table_using_plan_from_file('scratch.pix_accounts', '/Users/spl/work/ivc/co/pix/xfp/pix_accounts.xfp')
 
+		
