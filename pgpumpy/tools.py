@@ -566,11 +566,9 @@ if __name__ == "__main__":
 
 	# from cfgpy.tools import FMT_INI, Cfg
 	# from pgpumpy.tools import PgPump
-	#cfg = Cfg(FMT_INI, None, '<config-filespec>')
-	cfg = Cfg(FMT_INI, None, ['/Users/spl/work/ivc/co/pix/config.ini'])
-	pp.pprint(cfg.cfg_dict)
+	cfg = Cfg(FMT_INI, None, '<config-filespec>')
 	p = PgPump(cfg)
-	# p.fill_table_using_plan_from_file('<target-tablename>', '<transfer-plan-filepath>')
-	p.fill_table_using_plan_from_file('scratch.pix_accounts', '/Users/spl/work/ivc/co/pix/xfp/pix_accounts.xfp')
+	p.fill_table_using_plan_from_file('<target-tablename>', '<transfer-plan-filepath>')
+
 
 		
