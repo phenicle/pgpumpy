@@ -3,11 +3,13 @@ import sys
 import re
 from cfgpy.tools import FMT_INI, Cfg
 from pgdbpy.tools import PgDb
-import psycopg2
+#import psycopg2
+import time
 import pprint
 
 MYNAME = 'pgpumpy'
 DEFAULT_DATA_WINDOW_SIZE = 0
+DEFAULT_SLEEP_TIME = 0
 DEBUGGING = True
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -485,16 +487,20 @@ class PgPumpPy(object):
 		self.target = PgDb( cfg, 'datatarget')
 
 		self.data_window_size = DEFAULT_DATA_WINDOW_SIZE
+		self.sleep_time = DEFAULT_SLEEP_TIME
 		if MYNAME in cfg.cfg_dict:
 			module_cfgdict = cfg.cfg_dict[MYNAME]
 			if 'data_window_size' in module_cfgdict:
 				self.data_window_size = int(module_cfgdict['data_window_size'])
+			if 'sleep_time' in module_cfgdict:
+				self.sleep_time = float(module_cfgdict['sleep_time'])
 
 
 	def retrieve_data_from_source(self, transferplan):
 
 		sql = transferplan.build_select_query()
-		print "sql: {}".format(sql)
+		if DEBUGGING:
+			print "sql: {}".format(sql)
 		rows = self.source.execute('all', sql, None)
 		return rows
 
@@ -513,28 +519,37 @@ class PgPumpPy(object):
 
 	def retrieve_and_update_with_data_windowing(self, target_tablename, xferplan):
 
-		print "using data windowing, window size {}".format(self.data_window_size)
-		pp.pprint(xferplan.__dict__)
-		pp.pprint(xferplan.column_transference_list[0].__dict__)
-		pp.pprint(xferplan.column_transference_list[0].data_source.__dict__)
-		print "source table: {}".format(xferplan.column_transference_list[0].data_source.table)
+		if DEBUGGING:
+			print "using data windowing, window size {}".format(self.data_window_size)
+			pp.pprint(xferplan.__dict__)
+			pp.pprint(xferplan.column_transference_list[0].__dict__)
+			pp.pprint(xferplan.column_transference_list[0].data_source.__dict__)
+			print "source table: {}".format(xferplan.column_transference_list[0].data_source.table)
 
 		sql = xferplan.build_select_query()
 		query_result_set_row_count = int(self.source.get_query_result_set_rowcount(sql))
-		print "query result set count: {}".format(query_result_set_row_count)
+		if DEBUGGING:
+			print "query result set count: {}".format(query_result_set_row_count)
 		if query_result_set_row_count <= self.data_window_size:
-			print "{} <= {}, so not using windowing".format(query_result_set_row_count,self.data_window_size)
+			if DEBUGGING:
+				msg = "{} <= {}, so not using windowing"
+				print msg.format(query_result_set_row_count,self.data_window_size)
 			result_set = self.retrieve_data_from_source(xferplan)
 			self.update_target(target_tablename, xferplan.upsert_template, result_set)
 			return
 
 		for start in range(0,query_result_set_row_count,self.data_window_size):
 			end = min(start + self.data_window_size, query_result_set_row_count)
-			print "start: {}, end: {}".format(start, end)
+			if DEBUGGING:
+				print "start: {}, end: {}".format(start, end)
 			sql = xferplan.build_select_query_with_windowing(start, self.data_window_size)
-			print "{}".format(sql)
+			if DEBUGGING:
+				print "{}".format(sql)
 			result_set = self.source.execute('all', sql, None)
-			self.update_target(target_tablename, xferplan.upsert_template, result_set)			
+			self.update_target(target_tablename, xferplan.upsert_template, result_set)
+			if DEBUGGING:
+				print "sleeping for {} seconds".format(self.sleep_time)
+			time.sleep(self.sleep_time)		
 
 
 
