@@ -472,7 +472,6 @@ class TransferPlan(object):
 		return sql
 
 
-
 class PgPumpPy(object):
 
 	def __init__(self,cfg):
@@ -483,8 +482,8 @@ class PgPumpPy(object):
 
 		self.cfg = cfg.cfg_dict
 
-		self.source = PgDb( cfg, 'datasource')
-		self.target = PgDb( cfg, 'datatarget')
+		self.source_cfg = PgDb( cfg, 'datasource')
+		self.target_cfg = PgDb( cfg, 'datatarget')
 
 		self.data_window_size = DEFAULT_DATA_WINDOW_SIZE
 		self.sleep_time = DEFAULT_SLEEP_TIME
@@ -494,6 +493,45 @@ class PgPumpPy(object):
 				self.data_window_size = int(module_cfgdict['data_window_size'])
 			if 'sleep_time' in module_cfgdict:
 				self.sleep_time = float(module_cfgdict['sleep_time'])
+
+		self.source_host = self.source_cfg['host']
+		self.source_name = self.source_cfg['name']
+		self.source_user = self.source_cfg['user']
+		self.source_port = 5432
+		if 'port' in self.source_cfg:
+			self.source_port = self.source_cfg['port']
+		self.source_pass = None
+		if 'password' in self.source_cfg:
+			self.source_pass = self.source_cfg['password']
+
+		self.target_host = self.target_cfg['host']
+		self.target_name = self.target_cfg['name']
+		self.target_user = self.target_cfg['user']
+		self.target_port = 5432
+		if 'port' in self.target_cfg:
+			self.target_port = self.target_cfg['port']
+		self.target_pass = None
+		if 'password' in self.target_cfg:
+			self.target_pass = self.target_cfg['password']
+
+		cnxstr_template = "host='{}' user='{}' dbname='{}' password='{}'"
+		source_cnxstr = cnxstr_template.format(
+			self.source_host,
+			self.source_user,
+			self.source_name,
+			self.source_pass
+			)
+
+		self.source = psycopg2.connect(source_cnxstr)
+
+		target_cnxstr = cnxstr_template.format(
+			self.target_host,
+			self.target_user,
+			self.target_name,
+			self.target_pass
+			)
+
+		self.target = psycopg2.connect(target_cnxstr)
 
 
 	def retrieve_data_from_source(self, transferplan):
@@ -517,6 +555,7 @@ class PgPumpPy(object):
 
 		self.target.execute('none', enable_cmd)
 
+
 	def retrieve_and_update_with_data_windowing(self, target_tablename, xferplan):
 
 		if DEBUGGING:
@@ -527,6 +566,8 @@ class PgPumpPy(object):
 			print "source table: {}".format(xferplan.column_transference_list[0].data_source.table)
 
 		sql = xferplan.build_select_query()
+		if DEBUGGING:
+			print "select query: {}".format(sql)
 		query_result_set_row_count = int(self.source.get_query_result_set_rowcount(sql))
 		if DEBUGGING:
 			print "query result set count: {}".format(query_result_set_row_count)
@@ -550,7 +591,6 @@ class PgPumpPy(object):
 			if DEBUGGING:
 				print "sleeping for {} seconds".format(self.sleep_time)
 			time.sleep(self.sleep_time)		
-
 
 
 	def fill_table_using_plan_from_file(self, target_tablename, filepath):
