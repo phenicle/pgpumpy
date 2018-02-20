@@ -10,7 +10,8 @@ import pprint
 MYNAME = 'pgpumpy'
 DEFAULT_DATA_WINDOW_SIZE = 0
 DEFAULT_SLEEP_TIME = 0
-DEBUGGING = True
+DEBUGGING = False
+DEFAULT_CURSORTYPE = 'tuple'
 pp = pprint.PrettyPrinter(indent=4)
 
 is_link_pattern = re.compile(r'^:link.*$')
@@ -474,7 +475,7 @@ class TransferPlan(object):
 
 class PgPumpPy(object):
 
-	def __init__(self,cfg):
+	def __init__(self,cfg, cursortype=DEFAULT_CURSORTYPE):
 
 		if not type(cfg).__name__ == 'CfgPy' and not type(cfg).__name__ == 'Cfg':
 			raise ValueError('expecting config argument to be a CfgPy or Cfg object')
@@ -482,8 +483,8 @@ class PgPumpPy(object):
 
 		self.cfg = cfg.cfg_dict
 
-		self.source_cfg = PgDb( cfg, 'datasource')
-		self.target_cfg = PgDb( cfg, 'datatarget')
+		self.source = PgDb( cfg, 'datasource')
+		self.target = PgDb( cfg, 'datatarget')
 
 		self.data_window_size = DEFAULT_DATA_WINDOW_SIZE
 		self.sleep_time = DEFAULT_SLEEP_TIME
@@ -493,46 +494,6 @@ class PgPumpPy(object):
 				self.data_window_size = int(module_cfgdict['data_window_size'])
 			if 'sleep_time' in module_cfgdict:
 				self.sleep_time = float(module_cfgdict['sleep_time'])
-
-		self.source_host = self.source_cfg['host']
-		self.source_name = self.source_cfg['name']
-		self.source_user = self.source_cfg['user']
-		self.source_port = 5432
-		if 'port' in self.source_cfg:
-			self.source_port = self.source_cfg['port']
-		self.source_pass = None
-		if 'password' in self.source_cfg:
-			self.source_pass = self.source_cfg['password']
-
-		self.target_host = self.target_cfg['host']
-		self.target_name = self.target_cfg['name']
-		self.target_user = self.target_cfg['user']
-		self.target_port = 5432
-		if 'port' in self.target_cfg:
-			self.target_port = self.target_cfg['port']
-		self.target_pass = None
-		if 'password' in self.target_cfg:
-			self.target_pass = self.target_cfg['password']
-
-		cnxstr_template = "host='{}' user='{}' dbname='{}' password='{}'"
-		source_cnxstr = cnxstr_template.format(
-			self.source_host,
-			self.source_user,
-			self.source_name,
-			self.source_pass
-			)
-
-		self.source = psycopg2.connect(source_cnxstr)
-
-		target_cnxstr = cnxstr_template.format(
-			self.target_host,
-			self.target_user,
-			self.target_name,
-			self.target_pass
-			)
-
-		self.target = psycopg2.connect(target_cnxstr)
-
 
 	def retrieve_data_from_source(self, transferplan):
 
